@@ -177,8 +177,8 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             obj_pts, img_pts, K, None,
             reprojectionError=8.0,
-            confidence=0.99,
-            iterationsCount=100,
+            confidence=0.95,
+            iterationsCount=300,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
 
@@ -214,14 +214,14 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
                     if m.distance < 0.75 * n.distance:
                         good_matches.append(m)
 
-            if len(good_matches) < 4:
+            if len(good_matches) < 3:
                 continue
 
             pts1 = np.array([features[reg_idx].keypoints[m.queryIdx].pt for m in good_matches])
             pts2 = np.array([features[idx].keypoints[m.trainIdx].pt for m in good_matches])
 
             # PRIORITY 2: Epipolar geometry validation
-            F, epipolar_mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_RANSAC, 1.0, 0.99)
+            F, epipolar_mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_RANSAC, 2.5, 0.95)
             if F is None or np.sum(epipolar_mask) < 4:
                 continue
             epipolar_mask = epipolar_mask.ravel().astype(bool)
@@ -310,8 +310,8 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
         
         mean_err = np.mean(errors)
         track.error = mean_err
-        # PRIORITY 1: Stricter reprojection filtering (1.0 pixel)
-        if mean_err < 1.0:
+        # PRIORITY 1: Very relaxed reprojection filtering (4.0 pixels) for maximum density
+        if mean_err < 4.0:
             filtered_tracks.append(track)
 
     state.tracks = filtered_tracks

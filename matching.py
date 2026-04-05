@@ -8,7 +8,7 @@ import numpy as np
 from features import FeatureSet
 
 
-def match_features(desc1: np.ndarray, desc2: np.ndarray, ratio: float = 0.75):
+def match_features(desc1: np.ndarray, desc2: np.ndarray, ratio: float = 0.85):
     matcher = cv2.BFMatcher(cv2.NORM_L2)
     knn = matcher.knnMatch(desc1, desc2, k=2)
     good = []
@@ -29,7 +29,7 @@ def build_correspondences(
     pts1 = np.float32([feat1.keypoints[m.queryIdx].pt for m in matches])
     pts2 = np.float32([feat2.keypoints[m.trainIdx].pt for m in matches])
 
-    if len(pts1) < 8:
+    if len(pts1) < 6:
         raise RuntimeError("Not enough matches for geometry estimation.")
 
     return pts1, pts2

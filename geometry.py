@@ -17,8 +17,8 @@ def estimate_pose_and_triangulate(
         pts2,
         K,
         method=cv2.RANSAC,
-        prob=0.999,
-        threshold=1.0,
+        prob=0.99,
+        threshold=2.0,
     )
     if E is None:
         raise RuntimeError("Essential matrix estimation failed.")
@@ -66,8 +66,8 @@ def pnp_register_image(
         K,
         None,
         iterationsCount=2000,
-        reprojectionError=3.0,
-        confidence=0.999,
+        reprojectionError=7.0,
+        confidence=0.95,
         flags=cv2.SOLVEPNP_ITERATIVE,
     )
 
