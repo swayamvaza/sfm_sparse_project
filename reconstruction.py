@@ -220,13 +220,22 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
             pts1 = np.array([features[reg_idx].keypoints[m.queryIdx].pt for m in good_matches])
             pts2 = np.array([features[idx].keypoints[m.trainIdx].pt for m in good_matches])
 
+            # PRIORITY 2: Epipolar geometry validation
+            F, epipolar_mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_RANSAC, 1.0, 0.99)
+            if F is None or np.sum(epipolar_mask) < 4:
+                continue
+            epipolar_mask = epipolar_mask.ravel().astype(bool)
+            pts1_epi = pts1[epipolar_mask]
+            pts2_epi = pts2[epipolar_mask]
+            good_matches_epi = [good_matches[k] for k in np.where(epipolar_mask)[0]]
+
             # Triangulate
             R_reg, t_reg = state.registered_poses[reg_idx]
             R_idx, t_idx = state.registered_poses[idx]
 
             P1 = K @ np.hstack([R_reg, t_reg])
             P2 = K @ np.hstack([R_idx, t_idx])
-            pts4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+            pts4d = cv2.triangulatePoints(P1, P2, pts1_epi.T, pts2_epi.T)
             pts3d_new = (pts4d[:3] / pts4d[3]).T
 
             # Filter validity
@@ -235,25 +244,47 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
                 continue
 
             pts3d_new = pts3d_new[valid_new]
-            pts1_valid = pts1[valid_new]
-            good_matches_valid = [good_matches[k] for k in np.where(valid_new)[0]]
+            pts1_valid = pts1_epi[valid_new]
+            good_matches_valid = [good_matches_epi[k] for k in np.where(valid_new)[0]]
 
-            # Add new tracks
-            n_new = 0
+            # PRIORITY 3: Track reuse - extend existing tracks instead of creating duplicates
+            n_new, n_extended = 0, 0
+            used_track_ids = set()
+            
             for pt_idx, pt3d in enumerate(pts3d_new):
-                color = sample_colors(images[idx], pts1_valid[pt_idx:pt_idx+1])[0]
-                track = Track(
-                    point_3d=pt3d,
-                    color=color,
-                    observations={
-                        reg_idx: good_matches_valid[pt_idx].queryIdx,
-                        idx: good_matches_valid[pt_idx].trainIdx,
-                    }
-                )
-                state.tracks.append(track)
-                n_new += 1
+                m = good_matches_valid[pt_idx]
+                kpt_idx_reg = m.queryIdx
+                kpt_idx_new = m.trainIdx
+                
+                # Check if keypoint in reg_idx already belongs to a track
+                existing_track_idx = None
+                for t_idx, track in enumerate(state.tracks):
+                    if reg_idx in track.observations and track.observations[reg_idx] == kpt_idx_reg:
+                        existing_track_idx = t_idx
+                        break
+                
+                if existing_track_idx is not None and existing_track_idx not in used_track_ids:
+                    # Extend existing track
+                    state.tracks[existing_track_idx].observations[idx] = kpt_idx_new
+                    state.tracks[existing_track_idx].point_3d = pt3d
+                    state.tracks[existing_track_idx].color = sample_colors(images[idx], pts1_valid[pt_idx:pt_idx+1])[0]
+                    used_track_ids.add(existing_track_idx)
+                    n_extended += 1
+                else:
+                    # Create new track
+                    color = sample_colors(images[idx], pts1_valid[pt_idx:pt_idx+1])[0]
+                    track = Track(
+                        point_3d=pt3d,
+                        color=color,
+                        observations={
+                            reg_idx: kpt_idx_reg,
+                            idx: kpt_idx_new,
+                        }
+                    )
+                    state.tracks.append(track)
+                    n_new += 1
 
-            print(f"  +{n_new} tracks from image {reg_idx}")
+            print(f"  +{n_new} new, +{n_extended} extended from image {reg_idx}")
 
     # 3. BUNDLE ADJUSTMENT
     if len(state.tracks) > 0:
@@ -279,7 +310,8 @@ def run_incremental(images_dir: str, out_ply: Optional[str] = None):
         
         mean_err = np.mean(errors)
         track.error = mean_err
-        if mean_err < 2.0:
+        # PRIORITY 1: Stricter reprojection filtering (1.0 pixel)
+        if mean_err < 1.0:
             filtered_tracks.append(track)
 
     state.tracks = filtered_tracks
